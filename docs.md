@@ -11,11 +11,10 @@ Path: @/nori-slack-cli
 - Supports `describe <method>` to look up parameter documentation for any Slack API method without requiring a token -- the metadata map covers all methods in `KNOWN_METHODS`, so agents always get full parameter documentation rather than a fallback
 
 ### How it fits into the larger codebase
-- Lives as a standalone tool under the `nori-integrations` monorepo, in the `slack` worktree
-- Intended to be `npm link`ed or installed globally so agents can invoke `nori-slack` from any working directory
+- Published to npm as `nori-slack-cli`; the `nori-slack` binary is exposed via the `bin` field in `package.json`
+- Intended to be installed globally (`npm install -g nori-slack-cli`) or `npm link`ed from a source checkout, so agents can invoke `nori-slack` from any working directory
 - Authentication is bot-token-only via `SLACK_BOT_TOKEN` environment variable (no user OAuth flows)
 - The CLI is a thin wrapper -- it does not contain business logic, scheduling, or state management; it translates CLI flags into Slack API calls and returns the raw JSON response
-- The project spec lives in [spec/APPLICATION-SPEC.md](spec/APPLICATION-SPEC.md)
 - The pagination merge logic in [src/paginate.ts](src/paginate.ts) is a pure function decoupled from the Slack SDK -- it operates on any `AsyncIterable` of page objects
 
 ### Core Implementation
@@ -36,6 +35,6 @@ Path: @/nori-slack-cli
 - Error formatting in [src/errors.ts](src/errors.ts) maps Slack error codes to actionable suggestions (e.g., `channel_not_found` suggests running `conversations.list`); unknown errors get a generic suggestion pointing to the source directory
 - Every error response includes a `source` field with the filesystem path to the CLI, so agents can locate the source code for debugging
 - The method metadata in [src/method-metadata.ts](src/method-metadata.ts) marks `files.upload` as deprecated with a pointer to the two-step `files.getUploadURLExternal` + `files.completeUploadExternal` flow
-- The `postbuild` script runs `chmod +x` on the output and `npm link` to make the binary available immediately after build
+- The `postbuild` script runs `chmod +x` on `dist/index.js` so the built binary is executable; global availability comes from `npm install -g` or `npm link`, not from `postbuild`
 
 Created and maintained by Nori.
