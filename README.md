@@ -12,17 +12,17 @@ Bolt is built for human developers writing TypeScript. This CLI is built for cod
 - **Exhaustive surface.** The agent has access to the full Slack Web API — not a hand-picked subset. Capability boundaries are enforced through **bot token scopes**, not through code.
 - **Bot tokens only.** Uses `SLACK_BOT_TOKEN` exclusively. There is no user-OAuth flow because there is no human in the loop.
 - **Self-locating errors.** Every error response includes a `source` field with the on-disk path to the CLI, so an agent can read the source code to debug.
-- **Installable from npm.** Published as `nori-slack-cli`; puts `nori-slack` on your `PATH`. Or build from source if you prefer.
+- **Install from npm.** `npm install -g nori-slack-cli` puts `nori-slack` on your `PATH`. Cloning and building from source is also supported for contributors.
 
 ## Install
 
-Install from npm:
+From npm:
 
 ```bash
 npm install -g nori-slack-cli
 ```
 
-Or install from source:
+From source (for contributors):
 
 ```bash
 git clone https://github.com/tilework-tech/nori-slack-cli.git
