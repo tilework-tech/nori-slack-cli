@@ -1,14 +1,16 @@
-# Noridoc: nori-slack-cli/test
+# Noridoc: test
 
-Path: @/nori-slack-cli/test
+Path: @/test
 
 ### Overview
-- Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess
-- Uses Vitest as the test runner; integration tests in `cli.test.ts` use `tsx` to run TypeScript source directly, while `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact
+- Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess, plus an end-to-end packaging test that installs the npm tarball
+- Uses Vitest as the test runner; integration tests in `cli.test.ts` use `tsx` to run TypeScript source directly, `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
 
 ### How it fits into the larger codebase
-- Tests cover the pure utility modules in [@/nori-slack-cli/src](../src/): argument parsing, error formatting, pagination merging, and method metadata
+- Tests cover the pure utility modules in [@/src](../src/): argument parsing, error formatting, pagination merging, and method metadata
 - Integration tests in [cli.test.ts](cli.test.ts) exercise the full CLI binary by spawning `npx tsx src/index.ts` as a child process, verifying end-to-end behavior including exit codes, stdout JSON structure, and stderr output
+- [packaging.test.ts](packaging.test.ts) closes the loop on the npm distribution path documented in [@/docs.md](../docs.md) -- it is the guard against the `0.1.0` regression where `dist/` was missing from the published tarball
+- All tests run on every PR and on every push to `main` via the workflows in [@/.github/workflows](../.github/workflows/)
 - The test directory is excluded from TypeScript compilation via `tsconfig.json`
 
 ### Core Implementation
@@ -45,12 +47,19 @@ Path: @/nori-slack-cli/test
 
 **`build.test.ts`** -- Build verification tests that exercise the compiled output:
 - `beforeAll` runs `tsc` once; all tests share the resulting `dist/index.js`
-- Uses `node dist/index.js` directly (unlike `cli.test.ts` which uses `npx tsx src/index.ts`), verifying the actual build artifact that `npm link` would expose
+- Uses `node dist/index.js` directly (unlike `cli.test.ts` which uses `npx tsx src/index.ts`), verifying the actual build artifact that a global install would expose
 - Validates `--version` output, `list-methods` JSON structure, and no-args usage error exit code
+
+**`packaging.test.ts`** -- End-to-end packaging test that validates the npm distribution path:
+- `beforeAll` creates two tmpdirs, runs `npm pack` on the project root to produce a `.tgz`, then `npm init -y` + `npm install --no-save <tarball>` in the second tmpdir to simulate a downstream install
+- Asserts the installed `node_modules/.bin/nori-slack` binary exists and that running it with `list-methods --namespace chat` returns exit 0 with JSON containing `chat.postMessage`
+- Runs on every `npm test` invocation (not gated) so the tarball contents are continuously verified; the `beforeAll` has a 180s timeout because `npm pack` + `npm install` of the tarball is slow
+- This test is the enforcement mechanism for the packaging invariant documented in [@/docs.md](../docs.md): if `prepare`, `files`, or `bin` regress, this test fails before a broken version can be published
 
 ### Things to Know
 - Integration tests make real HTTP calls to Slack's API (with invalid tokens), so they require network access
 - The `runCli` helper sets a 10-second timeout to prevent hangs
 - Tests intentionally verify structure (JSON shape, field presence, field types) rather than exact string values, making them resilient to Slack API message changes
+- `packaging.test.ts` shells out to `npm` and writes into `os.tmpdir()`, so CI runners must have npm available and writable tmp space
 
 Created and maintained by Nori.

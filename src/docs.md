@@ -1,14 +1,14 @@
-# Noridoc: nori-slack-cli/src
+# Noridoc: src
 
-Path: @/nori-slack-cli/src
+Path: @/src
 
 ### Overview
 - Contains all source modules for the CLI: entry point, argument parsing, error formatting, pagination merging, fuzzy method suggestion, the known-methods catalog, and the method metadata registry
 - Compiles from `src/` to `dist/` via TypeScript (ES2022 target, Node16 module resolution)
 
 ### How it fits into the larger codebase
-- [index.ts](index.ts) is the CLI entry point (shebang `#!/usr/bin/env node`), compiled to `dist/index.js` and exposed as the `nori-slack` binary via `package.json` `bin` field
-- [parse-args.ts](parse-args.ts), [errors.ts](errors.ts), and [paginate.ts](paginate.ts) are pure utility modules with no side effects -- they are independently testable and tested in [@/nori-slack-cli/test](../test/)
+- [index.ts](index.ts) is the CLI entry point (shebang `#!/usr/bin/env node`), compiled to `dist/index.js` and exposed as the `nori-slack` binary via the `bin` field in [../package.json](../package.json). The compiled `dist/` directory is produced at pack time by the `prepare` script and shipped to the npm registry via the `files` allowlist -- see [../docs.md](../docs.md) for the full packaging chain
+- [parse-args.ts](parse-args.ts), [errors.ts](errors.ts), and [paginate.ts](paginate.ts) are pure utility modules with no side effects -- they are independently testable and tested in [@/test](../test/)
 - [methods.ts](methods.ts) is a static data file; it is only used by the `list-methods` subcommand and has no effect on which methods the CLI can actually call
 
 ### Core Implementation
