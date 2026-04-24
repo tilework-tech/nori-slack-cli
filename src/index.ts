@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('nori-slack')
   .description('CLI for the Slack Web API. Designed for coding agents.\n\nUsage: nori-slack <method> [--param value ...]\n\nExamples:\n  nori-slack chat.postMessage --channel C123 --text "Hello"\n  nori-slack conversations.list --limit 10\n  nori-slack api.test --foo bar\n  echo \'{"channel":"C123","text":"hi"}\' | nori-slack chat.postMessage --json-input')
-  .version('0.1.0');
+  .version('0.1.1');
 
 program
   .command('list-methods')
