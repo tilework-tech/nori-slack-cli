@@ -18,7 +18,8 @@
   },
   "dependencies": {
     "@slack/web-api": "^7.0.0",
-    "commander": "^13.0.0"
+    "commander": "^13.0.0",
+    "nori-slack-cli": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
