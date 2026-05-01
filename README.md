@@ -1,6 +1,6 @@
 # nori-slack-cli
 
-A CLI for the Slack Web API, designed for coding agents.
+A CLI for the Slack Web API, designed for coding agents. Used as the Slack driver for [Nori Sessions](https://norisessions.com/) background agents.
 
 `nori-slack-cli` is a thin command-line wrapper around the Slack Web API that maps **1:1 to Bolt** (`@slack/web-api`). Every method Bolt exposes is reachable through a single dynamic command — there is no curated subset, no opinionated abstraction layer, and no business logic. If Bolt can call it, this CLI can call it.
 
