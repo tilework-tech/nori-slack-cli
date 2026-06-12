@@ -3,12 +3,13 @@
 Path: @/test
 
 ### Overview
-- Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess, plus an end-to-end packaging test that installs the npm tarball
-- Uses Vitest as the test runner; integration tests in `cli.test.ts` use `tsx` to run TypeScript source directly, `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
+- Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess (direct mode against the real Slack API, proxy mode against a local fake broker), plus an end-to-end packaging test that installs the npm tarball
+- Uses Vitest as the test runner; integration tests in `cli.test.ts` and `proxy-mode.test.ts` use `tsx` to run TypeScript source directly via the shared helpers in [helpers.ts](helpers.ts), `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
 
 ### How it fits into the larger codebase
 - Tests cover the pure utility modules in [@/src](../src/): argument parsing, error formatting, pagination merging, and method metadata
-- Integration tests in [cli.test.ts](cli.test.ts) exercise the full CLI binary by spawning `npx tsx src/index.ts` as a child process, verifying end-to-end behavior including exit codes, stdout JSON structure, and stderr output
+- Integration tests in [cli.test.ts](cli.test.ts) and [proxy-mode.test.ts](proxy-mode.test.ts) exercise the full CLI binary by spawning `npx tsx src/index.ts` as a child process, verifying end-to-end behavior including exit codes, stdout JSON structure, and stderr output
+- [proxy-mode.test.ts](proxy-mode.test.ts) is the blackbox verification of the proxy transport in [@/src/transport.ts](../src/transport.ts) -- it pins the wire contract that the Nori Sessions broker depends on
 - [packaging.test.ts](packaging.test.ts) closes the loop on the npm distribution path documented in [@/docs.md](../docs.md) -- it is the guard against the `0.1.0` regression where `dist/` was missing from the published tarball
 - All tests run on every PR and on every push to `main` via the workflows in [@/.github/workflows](../.github/workflows/)
 - The test directory is excluded from TypeScript compilation via `tsconfig.json`
@@ -24,7 +25,7 @@ Path: @/test
 - Platform errors (e.g., `channel_not_found`) produce suggestions referencing relevant API methods
 - Rate limit errors include retry timing
 - Network errors surface the underlying error message
-- Missing token errors suggest setting `SLACK_BOT_TOKEN`
+- Missing-credential (`no_token`) errors suggest setting `SLACK_BOT_TOKEN`; proxy-specific error mapping is covered end-to-end in [proxy-mode.test.ts](proxy-mode.test.ts)
 
 **`paginate.test.ts`** -- Unit tests for the `mergePages` function:
 - Uses a `toAsyncIterable` helper to create async iterables from arrays of page objects
@@ -33,14 +34,24 @@ Path: @/test
 **`method-metadata.test.ts`** -- Coverage guard for method metadata:
 - Asserts that `getMethodMetadata` returns a curated (non-fallback) description for every method in `KNOWN_METHODS`, ensuring new methods added to the catalog also get metadata entries
 
-**`cli.test.ts`** -- Integration tests that run the CLI as a subprocess:
-- `runCli` helper spawns the CLI with `execFile` and captures stdout/stderr/exit code
-- `runCliWithStdin` helper uses `spawn` with piped stdin for `--json-input` tests
+**`helpers.ts`** -- Shared infrastructure for the subprocess integration tests:
+- `runCli` spawns the CLI with `execFile` (10-second timeout) and captures stdout/stderr/exit code; `runCliWithStdin` uses `spawn` with piped stdin for `--json-input` tests
+- Both build a hermetic environment: `SLACK_BOT_TOKEN`, `NORI_SLACK_PROXY_URL`, and `NORI_SLACK_CONTEXT_TOKEN` are stripped from the inherited process env before per-test overrides are applied. This exists because Nori session machines export the proxy vars, which would otherwise silently flip tests into proxy mode
+- `startFakeBroker()` starts a real local `http.Server` that records every request (URL, headers, parsed JSON body) and serves queued responses (defaulting to `{ok: true}`); its URL includes a path prefix so tests can verify URL joining
+
+**`cli.test.ts`** -- Direct-mode integration tests that run the CLI as a subprocess:
+- Uses the shared `runCli`/`runCliWithStdin` helpers from [helpers.ts](helpers.ts)
 - Tests use fake tokens (`xoxb-fake-token`) which produce real Slack `invalid_auth` errors, proving the full request path works without needing a valid token
 - Validates: no-args usage error, missing token error, `list-methods` output, structured JSON for API failures, stdin JSON input, source path in errors, suggestion text presence, `--paginate` flag acceptance, `--dry-run` behavior, `describe` command behavior, and `list-methods` filtering/description options
 - Describe tests cover: known method metadata output (required/optional params, docs URL), fallback for unknown methods (`known: false`), pagination support flags, deprecation notices, missing argument error, and spot-checks across newly-added namespaces (e.g., `dnd.setSnooze`, `usergroups.create`, `views.open`, `team.info`)
 - `list-methods` tests cover: `--namespace` filtering (verifies all returned methods share the prefix and unrelated methods are excluded), empty namespace returning an empty array, `--descriptions` changing the output shape to objects with `method` and `description` fields, and composition of both flags together
 - Suggestion tests cover: dry-run with misspelled methods verifying `suggestions` array and `warning` field in JSON output, case-correction suggestions, and stderr "Did you mean" warnings before API calls
+
+**`proxy-mode.test.ts`** -- Blackbox subprocess tests of the proxy transport against the fake broker from [helpers.ts](helpers.ts) (no real Slack traffic):
+- Pins the wire contract: POST `{method, args}` JSON to `<proxy>/method` with an `authorization: Bearer <context token>` header, plus trailing-slash URL handling and proxy-over-direct precedence when both credential sets are set
+- Verifies param handling is unchanged through the proxy (kebab-to-snake conversion, type coercion, `--json-input` pass-through) and that `--paginate` follows broker-supplied cursors and merges pages
+- Verifies error mapping: broker error envelopes, Slack platform-code extraction from "An API error occurred" messages, the 401 context-token suggestion, and the no-credentials envelope mentioning both auth options
+- Verifies `--dry-run` reports the correct `transport` value for all three modes without contacting the broker
 
 **`suggest.test.ts`** -- Unit tests for the `findSimilarMethods` function:
 - Verifies exact matches return no suggestions, case-insensitive matches return the correctly-cased method, single-character typos find the right method, nonsense input returns empty, result count respects the `maxResults` parameter, and results are sorted by similarity (closest first)
@@ -57,8 +68,9 @@ Path: @/test
 - This test is the enforcement mechanism for the packaging invariant documented in [@/docs.md](../docs.md): if `prepare`, `files`, or `bin` regress, this test fails before a broken version can be published
 
 ### Things to Know
-- Integration tests make real HTTP calls to Slack's API (with invalid tokens), so they require network access
-- The `runCli` helper sets a 10-second timeout to prevent hangs
+- Direct-mode integration tests in [cli.test.ts](cli.test.ts) make real HTTP calls to Slack's API (with invalid tokens), so they require network access; proxy-mode tests talk only to the local fake broker
+- The `runCli` helper in [helpers.ts](helpers.ts) sets a 10-second timeout to prevent hangs
+- The hermetic env in [helpers.ts](helpers.ts) means tests can never see host Slack credentials -- each test passes exactly the env vars it wants, and transport selection is fully determined by that input
 - Tests intentionally verify structure (JSON shape, field presence, field types) rather than exact string values, making them resilient to Slack API message changes
 - `packaging.test.ts` shells out to `npm` and writes into `os.tmpdir()`, so CI runners must have npm available and writable tmp space
 

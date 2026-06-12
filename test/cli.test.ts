@@ -1,52 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { execFile, spawn } from 'node:child_process';
-import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
-import path from 'node:path';
-
-const exec = promisify(execFile);
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI_PATH = path.resolve(__dirname, '../src/index.ts');
-const PROJECT_ROOT = path.resolve(__dirname, '..');
-
-async function runCli(args: string[], env: Record<string, string> = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  try {
-    const { stdout, stderr } = await exec(
-      'npx', ['tsx', CLI_PATH, ...args],
-      {
-        cwd: PROJECT_ROOT,
-        env: { ...process.env, ...env },
-        timeout: 10000,
-      }
-    );
-    return { stdout, stderr, exitCode: 0 };
-  } catch (error: any) {
-    return {
-      stdout: error.stdout || '',
-      stderr: error.stderr || '',
-      exitCode: error.code ?? 1,
-    };
-  }
-}
-
-async function runCliWithStdin(args: string[], stdinData: string, env: Record<string, string> = {}): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return new Promise((resolve) => {
-    const child = spawn('npx', ['tsx', CLI_PATH, ...args], {
-      cwd: PROJECT_ROOT,
-      env: { ...process.env, ...env },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-    child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-    child.on('close', (code: number | null) => {
-      resolve({ stdout, stderr, exitCode: code ?? 1 });
-    });
-    child.stdin.write(stdinData);
-    child.stdin.end();
-  });
-}
+import { runCli, runCliWithStdin } from './helpers.js';
 
 describe('CLI integration', () => {
   it('exits with non-zero code and shows usage when no method is provided', async () => {

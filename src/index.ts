@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { WebClient } from '@slack/web-api';
 import { parseArgs } from './parse-args.js';
 import { formatError } from './errors.js';
 import { KNOWN_METHODS } from './methods.js';
-import { mergePages } from './paginate.js';
+import { mergePages, paginatePages } from './paginate.js';
+import { detectTransportMode, resolveTransport } from './transport.js';
 import { getMethodMetadata, METHOD_METADATA } from './method-metadata.js';
 import { findSimilarMethods } from './suggest.js';
 import { fileURLToPath } from 'node:url';
@@ -19,7 +19,7 @@ const program = new Command();
 program
   .name('nori-slack')
   .description('CLI for the Slack Web API. Designed for coding agents.\n\nUsage: nori-slack <method> [--param value ...]\n\nExamples:\n  nori-slack chat.postMessage --channel C123 --text "Hello"\n  nori-slack conversations.list --limit 10\n  nori-slack api.test --foo bar\n  echo \'{"channel":"C123","text":"hi"}\' | nori-slack chat.postMessage --json-input')
-  .version('0.1.1');
+  .version('0.2.0');
 
 program
   .command('list-methods')
@@ -80,8 +80,6 @@ program
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (method: string, opts: Record<string, any>) => {
-    const token = process.env.SLACK_BOT_TOKEN;
-
     let params: Record<string, unknown> = {};
 
     if (opts.jsonInput) {
@@ -125,7 +123,8 @@ program
         dry_run: true,
         method,
         params,
-        token_present: !!token,
+        transport: detectTransportMode(),
+        token_present: !!process.env.SLACK_BOT_TOKEN,
         paginate: !!opts.paginate,
       };
       if (!KNOWN_METHODS.includes(method)) {
@@ -140,7 +139,8 @@ program
       return;
     }
 
-    if (!token) {
+    const transport = resolveTransport();
+    if (!transport) {
       const error = formatError({ code: 'no_token' }, SOURCE_DIR);
       process.stdout.write(JSON.stringify(error) + '\n');
       process.exit(1);
@@ -153,14 +153,12 @@ program
       }
     }
 
-    const client = new WebClient(token);
-
     try {
       let result;
       if (opts.paginate) {
-        result = await mergePages(client.paginate(method, params));
+        result = await mergePages(paginatePages(transport, method, params));
       } else {
-        result = await client.apiCall(method, params);
+        result = await transport.call(method, params);
       }
       process.stdout.write(JSON.stringify(result) + '\n');
     } catch (err) {

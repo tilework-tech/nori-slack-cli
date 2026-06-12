@@ -10,7 +10,7 @@ Bolt is built for human developers writing TypeScript. This CLI is built for cod
 
 - **No interactive prompts, no ASCII art.** Every successful response is a single line of JSON on stdout. Errors are JSON on stdout *and* a human-readable line on stderr.
 - **Exhaustive surface.** The agent has access to the full Slack Web API — not a hand-picked subset. Capability boundaries are enforced through **bot token scopes**, not through code.
-- **Bot tokens only.** Uses `SLACK_BOT_TOKEN` exclusively. There is no user-OAuth flow because there is no human in the loop.
+- **Two transports, one interface.** Direct mode calls Slack with `SLACK_BOT_TOKEN`; proxy mode routes the same `{method, args}` calls through a Nori Sessions broker using `NORI_SLACK_PROXY_URL` + `NORI_SLACK_CONTEXT_TOKEN`, so managed sessions never hold a raw bot token. There is no user-OAuth flow because there is no human in the loop.
 - **Self-locating errors.** Every error response includes a `source` field with the on-disk path to the CLI, so an agent can read the source code to debug.
 - **Install from npm.** `npm install -g nori-slack-cli` puts `nori-slack` on your `PATH`. Cloning and building from source is also supported for contributors.
 
@@ -32,10 +32,15 @@ npm run build
 npm link   # makes `nori-slack` available globally
 ```
 
-Then set your bot token:
+Then set credentials for one of the two transports (see [Authentication](#authentication)):
 
 ```bash
+# Direct mode
 export SLACK_BOT_TOKEN=xoxb-...
+
+# Proxy mode (set automatically inside Nori Sessions)
+export NORI_SLACK_PROXY_URL=https://broker.example.com/api/slack-proxy
+export NORI_SLACK_CONTEXT_TOKEN=...
 ```
 
 ## Usage
@@ -83,12 +88,21 @@ nori-slack describe chat.postMessage
 ### Exit codes
 
 - `0` — success
-- `1` — Slack API error or missing token
+- `1` — Slack API error, proxy error, or missing credentials
 - `2` — bad CLI usage (missing args, invalid stdin JSON)
 
 ## Authentication
 
-Set `SLACK_BOT_TOKEN` in the environment. The CLI does not read tokens from any other source. To control what the agent can do, scope the bot token in the Slack app's OAuth & Permissions page — the CLI itself imposes no method-level restrictions.
+The CLI supports two transports, selected from the environment:
+
+| Mode | Environment | Behavior |
+| --- | --- | --- |
+| **Proxy** | `NORI_SLACK_PROXY_URL` + `NORI_SLACK_CONTEXT_TOKEN` | POSTs `{method, args}` to `<url>/method` with the context token as a bearer token. Used inside Nori Sessions, where the broker enforces a per-session access grant and the raw bot token never reaches the machine. |
+| **Direct** | `SLACK_BOT_TOKEN` | Calls the Slack Web API directly via `@slack/web-api`. |
+
+When both are configured, **proxy mode wins**. All CLI features (`--json-input`, `--paginate`, `--dry-run`, kebab-case conversion, type coercion, error suggestions) behave identically in both modes. `--dry-run` reports which transport would be used via the `transport` field (`proxy`, `direct`, or `none`).
+
+In direct mode, capability boundaries come from the bot token's OAuth scopes. In proxy mode, the broker additionally restricts methods and channels to the session's access grant — requests outside the grant fail with a structured `proxy_error`.
 
 ## License
 
