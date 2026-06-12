@@ -1,6 +1,6 @@
 {
   "name": "nori-slack-cli",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "CLI for interacting with the Slack Web API, designed for coding agents",
   "type": "module",
   "bin": {
@@ -18,8 +18,7 @@
   },
   "dependencies": {
     "@slack/web-api": "^7.0.0",
-    "commander": "^13.0.0",
-    "nori-slack-cli": "^0.1.0"
+    "commander": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

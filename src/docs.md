@@ -3,12 +3,13 @@
 Path: @/src
 
 ### Overview
-- Contains all source modules for the CLI: entry point, argument parsing, error formatting, pagination merging, fuzzy method suggestion, the known-methods catalog, and the method metadata registry
+- Contains all source modules for the CLI: entry point, argument parsing, transport selection, error formatting, pagination, fuzzy method suggestion, the known-methods catalog, and the method metadata registry
 - Compiles from `src/` to `dist/` via TypeScript (ES2022 target, Node16 module resolution)
 
 ### How it fits into the larger codebase
 - [index.ts](index.ts) is the CLI entry point (shebang `#!/usr/bin/env node`), compiled to `dist/index.js` and exposed as the `nori-slack` binary via the `bin` field in [../package.json](../package.json). The compiled `dist/` directory is produced at pack time by the `prepare` script and shipped to the npm registry via the `files` allowlist -- see [../docs.md](../docs.md) for the full packaging chain
-- [parse-args.ts](parse-args.ts), [errors.ts](errors.ts), and [paginate.ts](paginate.ts) are pure utility modules with no side effects -- they are independently testable and tested in [@/test](../test/)
+- [transport.ts](transport.ts) is the only module that knows how to reach Slack. It selects between proxy mode (a Nori Sessions broker, configured by `NORI_SLACK_PROXY_URL` + `NORI_SLACK_CONTEXT_TOKEN`) and direct mode (`SLACK_BOT_TOKEN` via `@slack/web-api`); everything downstream works against its `Transport` interface
+- [parse-args.ts](parse-args.ts) and [errors.ts](errors.ts) are pure utility modules with no side effects; [paginate.ts](paginate.ts) is transport-generic (no Slack SDK dependency). All are independently testable and tested in [@/test](../test/)
 - [methods.ts](methods.ts) is a static data file; it is only used by the `list-methods` subcommand and has no effect on which methods the CLI can actually call
 
 ### Core Implementation
@@ -16,13 +17,21 @@ Path: @/src
 **Entry point (`index.ts`)**
 - Sets up Commander with three subcommands: `list-methods`, `describe`, and the default dynamic method handler
 - The dynamic handler: optionally reads JSON from stdin, parses CLI flags, merges params (CLI flags win over stdin), then branches into three paths:
-  1. `--dry-run`: short-circuits immediately after param resolution -- outputs a JSON preview with `ok`, `dry_run`, `method`, `params`, `token_present`, `paginate`, and optionally a `warning` for unknown methods. Does not require a token. Always exits 0.
-  2. `--paginate`: validates token, then calls `client.paginate()` + `mergePages()`
-  3. Default: validates token, then calls `client.apiCall()`
+  1. `--dry-run`: short-circuits immediately after param resolution -- outputs a JSON preview with `ok`, `dry_run`, `method`, `params`, `transport`, `token_present`, `paginate`, and optionally a `warning` for unknown methods. Does not require credentials. Always exits 0.
+  2. `--paginate`: resolves the transport via `resolveTransport()`, then runs `mergePages(paginatePages(transport, method, params))`
+  3. Default: resolves the transport, then makes a single `transport.call(method, params)`
+- If `resolveTransport()` returns null (no credentials in either mode), the handler emits the `no_token` error envelope and exits 1 before any API path runs
 - When no arguments are provided (`process.argv.length <= 2`), help text and error go to stderr and the process exits with code 2
 - The `list-methods` subcommand supports two options that compose together: `--namespace <ns>` filters the method list to those starting with the given prefix (e.g., `chat.`), and `--descriptions` changes the output shape from `string[]` to `Array<{ method, description }>` by pulling descriptions from `getMethodMetadata()`. When `--namespace` is provided, a `namespace` field is added to the response JSON.
 
-**Pagination merging (`paginate.ts`)**
+**Transport selection (`transport.ts`)**
+- `detectTransportMode(env)` returns `'proxy' | 'direct' | 'none'`: proxy when both `NORI_SLACK_PROXY_URL` and `NORI_SLACK_CONTEXT_TOKEN` are non-empty, otherwise direct when `SLACK_BOT_TOKEN` is set, otherwise none. Proxy takes precedence over a bot token
+- `resolveTransport(env)` returns a `Transport` (`{ mode, call(method, params) }`) or `null` when no credentials are available
+- Proxy `call` POSTs `{ method, args }` as JSON to `<proxy-url>/method` (trailing slashes are stripped from the configured URL first) with an `authorization: Bearer <context token>` header. A 2xx response is returned as the raw Slack JSON body; a non-2xx response throws `ProxyError` (code `nori_slack_proxy_error`) carrying the HTTP status and the broker's `error` message
+- Direct `call` wraps `WebClient.apiCall` from `@slack/web-api`
+
+**Pagination (`paginate.ts`)**
+- `paginatePages(transport, method, params)` is an async generator that repeatedly calls the transport, following `response_metadata.next_cursor` and terminating when the cursor is empty or missing. It replaces the old `WebClient.paginate()` path so pagination works identically over both transports
 - `mergePages(pages)` takes an `AsyncIterable` of page objects and returns a single merged object
 - Array-valued keys are concatenated across pages; scalar/metadata keys (`ok`, `response_metadata`, `headers`, `warning`) are overwritten with the last page's value
 - This design means the function works generically with any Slack method's response shape -- it does not need to know which key holds the data (e.g., `channels`, `members`, `messages`)
@@ -34,8 +43,10 @@ Path: @/src
 
 **Error formatting (`errors.ts`)**
 - `formatError(error, sourceDir)` returns a `CliError` object with fields: `ok`, `error`, `message`, `suggestion`, `source`
-- Handles four specific `@slack/web-api` error codes: `slack_webapi_platform_error`, `slack_webapi_rate_limited_error`, `slack_webapi_request_error`, and the custom `no_token`
-- The `SUGGESTIONS` map provides agent-friendly remediation text for common Slack platform errors like `channel_not_found`, `not_in_channel`, `invalid_auth`, `rate_limited`, etc.
+- Handles five specific error codes: the `@slack/web-api` codes `slack_webapi_platform_error`, `slack_webapi_rate_limited_error`, and `slack_webapi_request_error`, plus the custom `no_token` and the proxy transport's `nori_slack_proxy_error`
+- For `nori_slack_proxy_error`: broker messages of the form "An API error occurred: \<code\>" have the Slack platform code extracted and mapped through the same `SUGGESTIONS` table as direct-mode platform errors; HTTP 401 maps to `proxy_unauthorized` with a context-token rotation suggestion; any other status maps to `proxy_error` with a suggestion about the session's access grant
+- Broker wire contract behind those mappings: 200 returns raw Slack JSON; error statuses (e.g., 401, 403, 404) return `{ error: message }`
+- The `SUGGESTIONS` map provides agent-friendly remediation text for common Slack platform errors like `channel_not_found`, `not_in_channel`, `rate_limited`, etc.
 
 **Fuzzy method suggestion (`suggest.ts`)**
 - `findSimilarMethods(input, methods?, maxResults?)` returns up to 3 similar method names from `KNOWN_METHODS` for typo correction
@@ -60,5 +71,7 @@ Path: @/src
 - When both stdin JSON and CLI flags provide the same key, the CLI flag value wins due to spread order: `{ ...stdinParams, ...cliParams }`
 - Non-flag arguments (tokens not starting with `--`) are silently skipped by `parseArgs` -- they do not cause errors
 - Rate limit errors extract `retryAfter` from the `@slack/web-api` error object and include the retry duration in the message
+- The `--dry-run` output's `token_present` field only reflects `SLACK_BOT_TOKEN`; the `transport` field is the authoritative indicator of which mode would be used (proxy wins when both credential sets are present)
+- The missing-credentials error keeps the error code `no_token` for backward compatibility, but its message ("No Slack credentials provided.") and suggestion cover both credential sets
 
 Created and maintained by Nori.
