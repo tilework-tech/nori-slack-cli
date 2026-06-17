@@ -122,3 +122,14 @@ export const KNOWN_METHODS = [
   'workflows.stepFailed',
   'workflows.updateStep',
 ];
+
+// Pseudo-methods implemented by the Nori Sessions broker proxy, not the Slack
+// Web API. They only work in proxy mode (NORI_SLACK_PROXY_URL +
+// NORI_SLACK_CONTEXT_TOKEN), so they are tracked separately from KNOWN_METHODS.
+export const PROXY_METHODS = [
+  'files.download',
+];
+
+export function isKnownMethod(method: string): boolean {
+  return KNOWN_METHODS.includes(method) || PROXY_METHODS.includes(method);
+}

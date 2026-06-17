@@ -647,6 +647,15 @@ export const METHOD_METADATA: Record<string, MethodMetadata> = {
     supports_pagination: false,
     docs_url: docsUrl('files.delete'),
   },
+  'files.download': {
+    description: 'Proxy-only (Nori Sessions broker): downloads a file\'s bytes by ID. Not a real Slack Web API method — only works in session proxy mode. Returns the bytes base64-encoded in file.contentBase64; pass --output <path> to decode and write them to disk instead.',
+    required_params: {
+      file: 'File ID (e.g., F0123456789)',
+    },
+    optional_params: {},
+    supports_pagination: false,
+    docs_url: 'https://github.com/tilework-tech/nori-slack-cli#downloading-files',
+  },
   'files.info': {
     description: 'Gets information about a file.',
     required_params: {

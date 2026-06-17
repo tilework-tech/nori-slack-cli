@@ -84,6 +84,7 @@ nori-slack describe chat.postMessage
 | `--json-input` | Read parameters as JSON from stdin (CLI flags override stdin values). |
 | `--paginate` | Use cursor pagination and return a single merged JSON response. |
 | `--dry-run` | Resolve params and print the planned request without calling the API. |
+| `--output <path>` | For `files.download` only: decode the returned bytes and write them to `<path>` instead of printing base64. See [Downloading files](#downloading-files). |
 
 ### Exit codes
 
@@ -103,6 +104,29 @@ The CLI supports two transports, selected from the environment:
 When both are configured, **proxy mode wins**. All CLI features (`--json-input`, `--paginate`, `--dry-run`, kebab-case conversion, type coercion, error suggestions) behave identically in both modes. `--dry-run` reports which transport would be used via the `transport` field (`proxy`, `direct`, or `none`).
 
 In direct mode, capability boundaries come from the bot token's OAuth scopes. In proxy mode, the broker additionally restricts methods and channels to the session's access grant — requests outside the grant fail with a structured `proxy_error`.
+
+## Downloading files
+
+`files.download` is the one place this CLI is *not* a 1:1 Bolt mapping. It is a **pseudo-method implemented by the Nori Sessions broker**, not a real Slack Web API method — Slack serves file bytes from authenticated `url_private` URLs that a scoped session can't fetch directly, so the broker downloads them on the session's behalf.
+
+Because it only exists in the broker, `files.download` **works in proxy mode only**. In direct (`SLACK_BOT_TOKEN`) mode it fails fast with a `proxy_only_method` error rather than calling Slack.
+
+Given a file ID (from `files.info`, `conversations.history`, or a message's `files[]`), the broker returns the bytes base64-encoded:
+
+```bash
+# Raw response: { ok, file: { id, name, mimetype, contentType, contentBase64 } }
+nori-slack files.download --file F0123456789
+```
+
+Pass `--output <path>` to decode the base64 and write the bytes straight to disk. The response is then a summary that omits the (large) base64 blob:
+
+```bash
+# Writes the decoded bytes to ./icon.png
+nori-slack files.download --file F0123456789 --output ./icon.png
+# stdout: { ok: true, file: { id, name, mimetype, contentType, bytes, path } }
+```
+
+`--output` is the recommended path for binary files — it avoids piping a multi-megabyte base64 string through the shell.
 
 ## License
 
