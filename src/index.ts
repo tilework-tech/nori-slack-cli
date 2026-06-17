@@ -3,12 +3,13 @@
 import { Command } from 'commander';
 import { parseArgs } from './parse-args.js';
 import { formatError } from './errors.js';
-import { KNOWN_METHODS } from './methods.js';
+import { KNOWN_METHODS, CLI_METHODS, isKnownMethod } from './methods.js';
 import { mergePages, paginatePages } from './paginate.js';
 import { detectTransportMode, resolveTransport } from './transport.js';
 import { getMethodMetadata, METHOD_METADATA } from './method-metadata.js';
 import { findSimilarMethods } from './suggest.js';
 import { fileURLToPath } from 'node:url';
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,7 +28,7 @@ program
   .option('--namespace <ns>', 'Filter methods by namespace prefix (e.g., "chat", "conversations", "files")')
   .option('--descriptions', 'Include a short description for each method')
   .action((opts: { namespace?: string; descriptions?: boolean }) => {
-    let methods = KNOWN_METHODS;
+    let methods = [...KNOWN_METHODS, ...CLI_METHODS];
 
     if (opts.namespace) {
       const prefix = opts.namespace + '.';
@@ -77,6 +78,7 @@ program
   .option('--json-input', 'Read parameters as JSON from stdin')
   .option('--paginate', 'Automatically fetch all pages and merge results')
   .option('--dry-run', 'Preview the API request without sending it. Shows method, resolved params, and token status.')
+  .option('--output <path>', 'For files.download: decode the returned bytes and write them to this path instead of printing base64.')
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .action(async (method: string, opts: Record<string, any>) => {
@@ -110,10 +112,23 @@ program
       }
     }
 
-    // Parse CLI args directly from process.argv, skipping node, script, and method
-    const CLI_OPTIONS = ['--json-input', '--paginate', '--dry-run'];
+    // Parse CLI args directly from process.argv, skipping node, script, method,
+    // and the CLI's own flags so they don't leak into the Slack API params.
+    const BOOLEAN_CLI_OPTIONS = ['--json-input', '--paginate', '--dry-run'];
+    const VALUE_CLI_OPTIONS = ['--output'];
     const methodIndex = process.argv.indexOf(method);
-    const rawArgs = methodIndex >= 0 ? process.argv.slice(methodIndex + 1).filter(a => !CLI_OPTIONS.includes(a)) : [];
+    const rawSlice = methodIndex >= 0 ? process.argv.slice(methodIndex + 1) : [];
+    const rawArgs: string[] = [];
+    for (let i = 0; i < rawSlice.length; i++) {
+      const arg = rawSlice[i];
+      if (BOOLEAN_CLI_OPTIONS.includes(arg)) continue;
+      if (VALUE_CLI_OPTIONS.includes(arg)) {
+        i++; // also skip this option's value
+        continue;
+      }
+      if (VALUE_CLI_OPTIONS.some(opt => arg.startsWith(opt + '='))) continue;
+      rawArgs.push(arg);
+    }
     const cliParams = parseArgs(rawArgs);
     params = { ...params, ...cliParams };
 
@@ -127,7 +142,7 @@ program
         token_present: !!process.env.SLACK_BOT_TOKEN,
         paginate: !!opts.paginate,
       };
-      if (!KNOWN_METHODS.includes(method)) {
+      if (!isKnownMethod(method)) {
         const suggestions = findSimilarMethods(method);
         const didYouMean = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : '';
         dryRunResult.warning = `Method '${method}' is not in the known methods list.${didYouMean} It may still be valid.`;
@@ -146,7 +161,7 @@ program
       process.exit(1);
     }
 
-    if (!KNOWN_METHODS.includes(method)) {
+    if (!isKnownMethod(method)) {
       const suggestions = findSimilarMethods(method);
       if (suggestions.length > 0) {
         process.stderr.write(`Warning: Method '${method}' is not in the known methods list. Did you mean: ${suggestions.join(', ')}?\n`);
@@ -155,11 +170,32 @@ program
 
     try {
       let result;
-      if (opts.paginate) {
+      if (method === 'files.download') {
+        result = await transport.download(String(params.file ?? ''));
+      } else if (opts.paginate) {
         result = await mergePages(paginatePages(transport, method, params));
       } else {
         result = await transport.call(method, params);
       }
+
+      if (method === 'files.download' && opts.output && typeof result?.file?.contentBase64 === 'string') {
+        const file = result.file;
+        const outPath = path.resolve(process.cwd(), opts.output);
+        const bytes = Buffer.from(file.contentBase64, 'base64');
+        writeFileSync(outPath, bytes);
+        result = {
+          ok: result.ok ?? true,
+          file: {
+            id: file.id,
+            name: file.name,
+            mimetype: file.mimetype,
+            contentType: file.contentType,
+            bytes: bytes.length,
+            path: outPath,
+          },
+        };
+      }
+
       process.stdout.write(JSON.stringify(result) + '\n');
     } catch (err) {
       const error = formatError(err, SOURCE_DIR);

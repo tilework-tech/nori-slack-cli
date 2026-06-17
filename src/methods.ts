@@ -122,3 +122,16 @@ export const KNOWN_METHODS = [
   'workflows.stepFailed',
   'workflows.updateStep',
 ];
+
+// CLI convenience methods that are not part of the Slack Web API. They are
+// tracked separately from KNOWN_METHODS so discovery (list-methods, describe)
+// and unknown-method warnings recognize them. files.download works in both
+// transports: direct mode reads url_private_download from files.info and
+// fetches it with the bot token; proxy mode delegates to the broker.
+export const CLI_METHODS = [
+  'files.download',
+];
+
+export function isKnownMethod(method: string): boolean {
+  return KNOWN_METHODS.includes(method) || CLI_METHODS.includes(method);
+}
