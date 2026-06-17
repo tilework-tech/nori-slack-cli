@@ -3,7 +3,7 @@
 import { Command } from 'commander';
 import { parseArgs } from './parse-args.js';
 import { formatError } from './errors.js';
-import { KNOWN_METHODS, PROXY_METHODS, isKnownMethod } from './methods.js';
+import { KNOWN_METHODS, CLI_METHODS, isKnownMethod } from './methods.js';
 import { mergePages, paginatePages } from './paginate.js';
 import { detectTransportMode, resolveTransport } from './transport.js';
 import { getMethodMetadata, METHOD_METADATA } from './method-metadata.js';
@@ -28,7 +28,7 @@ program
   .option('--namespace <ns>', 'Filter methods by namespace prefix (e.g., "chat", "conversations", "files")')
   .option('--descriptions', 'Include a short description for each method')
   .action((opts: { namespace?: string; descriptions?: boolean }) => {
-    let methods = [...KNOWN_METHODS, ...PROXY_METHODS];
+    let methods = [...KNOWN_METHODS, ...CLI_METHODS];
 
     if (opts.namespace) {
       const prefix = opts.namespace + '.';
@@ -161,13 +161,6 @@ program
       process.exit(1);
     }
 
-    if (PROXY_METHODS.includes(method) && transport.mode === 'direct') {
-      const error = formatError({ code: 'proxy_only_method', method }, SOURCE_DIR);
-      process.stdout.write(JSON.stringify(error) + '\n');
-      process.stderr.write(`Error: ${error.message}\nSuggestion: ${error.suggestion}\n`);
-      process.exit(1);
-    }
-
     if (!isKnownMethod(method)) {
       const suggestions = findSimilarMethods(method);
       if (suggestions.length > 0) {
@@ -177,7 +170,9 @@ program
 
     try {
       let result;
-      if (opts.paginate) {
+      if (method === 'files.download') {
+        result = await transport.download(String(params.file ?? ''));
+      } else if (opts.paginate) {
         result = await mergePages(paginatePages(transport, method, params));
       } else {
         result = await transport.call(method, params);

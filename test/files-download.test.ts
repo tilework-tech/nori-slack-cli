@@ -78,25 +78,12 @@ describe('files.download', () => {
     expect(result.stderr).not.toContain('known methods list');
   });
 
-  it('errors in direct (SLACK_BOT_TOKEN) mode without contacting Slack', async () => {
-    const result = await runCli(
-      ['files.download', '--file', 'F1', '--output', path.join(tmpDir, 'x')],
-      { SLACK_BOT_TOKEN: 'xoxb-fake-token' }
-    );
-    expect(result.exitCode).toBe(1);
-    const output = JSON.parse(result.stdout);
-    expect(output.ok).toBe(false);
-    expect(output.error).toBe('proxy_only_method');
-    expect(output.suggestion).toContain('NORI_SLACK_PROXY_URL');
-    expect(existsSync(path.join(tmpDir, 'x'))).toBe(false);
-  });
-
-  it('describe reports it as a known proxy-only method', async () => {
+  it('describe reports it as a known download method', async () => {
     const result = await runCli(['describe', 'files.download'], {});
     expect(result.exitCode).toBe(0);
     const output = JSON.parse(result.stdout);
     expect(output.known).toBe(true);
-    expect(output.description.toLowerCase()).toContain('proxy');
+    expect(output.description.toLowerCase()).toContain('download');
     expect(output.required_params.file).toBeDefined();
   });
 

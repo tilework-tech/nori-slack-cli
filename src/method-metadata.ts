@@ -648,7 +648,7 @@ export const METHOD_METADATA: Record<string, MethodMetadata> = {
     docs_url: docsUrl('files.delete'),
   },
   'files.download': {
-    description: 'Proxy-only (Nori Sessions broker): downloads a file\'s bytes by ID. Not a real Slack Web API method — only works in session proxy mode. Returns the bytes base64-encoded in file.contentBase64; pass --output <path> to decode and write them to disk instead.',
+    description: 'Downloads a file\'s bytes by ID. Not a Slack Web API method: in direct mode the CLI reads url_private_download from files.info and fetches it with SLACK_BOT_TOKEN (requires the files:read scope); in proxy mode the Nori Sessions broker fetches the bytes on the session\'s behalf. Returns the bytes base64-encoded in file.contentBase64; pass --output <path> to decode and write them to disk instead.',
     required_params: {
       file: 'File ID (e.g., F0123456789)',
     },

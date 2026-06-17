@@ -107,11 +107,14 @@ In direct mode, capability boundaries come from the bot token's OAuth scopes. In
 
 ## Downloading files
 
-`files.download` is the one place this CLI is *not* a 1:1 Bolt mapping. It is a **pseudo-method implemented by the Nori Sessions broker**, not a real Slack Web API method — Slack serves file bytes from authenticated `url_private` URLs that a scoped session can't fetch directly, so the broker downloads them on the session's behalf.
+`files.download` is the one place this CLI is *not* a 1:1 Bolt mapping. Slack does not expose a "download" Web API method — file bytes live behind authenticated `url_private` URLs — so this CLI adds a convenience method that does the two-step dance for you.
 
-Because it only exists in the broker, `files.download` **works in proxy mode only**. In direct (`SLACK_BOT_TOKEN`) mode it fails fast with a `proxy_only_method` error rather than calling Slack.
+It works in **both transports**:
 
-Given a file ID (from `files.info`, `conversations.history`, or a message's `files[]`), the broker returns the bytes base64-encoded:
+- **Direct mode** (`SLACK_BOT_TOKEN`): the CLI calls `files.info` to resolve the file's `url_private_download` URL, then fetches the bytes with the bot token. Requires the `files:read` scope.
+- **Proxy mode** (`NORI_SLACK_PROXY_URL` + `NORI_SLACK_CONTEXT_TOKEN`): the Nori Sessions broker performs the same fetch on the session's behalf, because a scoped session never holds the raw bot token needed for `url_private`.
+
+Given a file ID (from `files.info`, `conversations.history`, or a message's `files[]`), it returns the bytes base64-encoded:
 
 ```bash
 # Raw response: { ok, file: { id, name, mimetype, contentType, contentBase64 } }

@@ -35,17 +35,6 @@ export function formatError(error: unknown, sourceDir: string): CliError {
     };
   }
 
-  if (err?.code === 'proxy_only_method') {
-    const method = err.method ? `'${err.method}'` : 'This method';
-    return {
-      ok: false,
-      error: 'proxy_only_method',
-      message: `${method} is only available through the Nori Sessions Slack proxy, not direct mode.`,
-      suggestion: 'It is implemented by the session broker, not the Slack Web API. Run inside a Nori Session with NORI_SLACK_PROXY_URL + NORI_SLACK_CONTEXT_TOKEN set, instead of SLACK_BOT_TOKEN.',
-      source: sourceDir,
-    };
-  }
-
   if (err?.code === 'nori_slack_proxy_error') {
     const status: number = err.status;
     const brokerMessage: string = err.message || 'Unknown proxy error';
