@@ -3,19 +3,20 @@
 Path: @/src
 
 ### Overview
-- Contains all source modules for the CLI: entry point, argument parsing, transport selection, error formatting, pagination, fuzzy method suggestion, the known-methods catalog, and the method metadata registry
+- Contains all source modules for the CLI: entry point, argument parsing, transport selection, error formatting, pagination, fuzzy method suggestion, the known-methods catalog, the method metadata registry, and the external file-upload orchestrator ([upload.ts](upload.ts))
 - Compiles from `src/` to `dist/` via TypeScript (ES2022 target, Node16 module resolution)
 
 ### How it fits into the larger codebase
 - [index.ts](index.ts) is the CLI entry point (shebang `#!/usr/bin/env node`), compiled to `dist/index.js` and exposed as the `nori-slack` binary via the `bin` field in [../package.json](../package.json). The compiled `dist/` directory is produced at pack time by the `prepare` script and shipped to the npm registry via the `files` allowlist -- see [../docs.md](../docs.md) for the full packaging chain
 - [transport.ts](transport.ts) is the only module that knows how to reach Slack. It selects between proxy mode (a Nori Sessions broker, configured by `NORI_SLACK_PROXY_URL` + `NORI_SLACK_CONTEXT_TOKEN`) and direct mode (`SLACK_BOT_TOKEN` via `@slack/web-api`); everything downstream works against its `Transport` interface
 - [parse-args.ts](parse-args.ts) and [errors.ts](errors.ts) are pure utility modules with no side effects; [paginate.ts](paginate.ts) is transport-generic (no Slack SDK dependency). All are independently testable and tested in [@/test](../test/)
+- [upload.ts](upload.ts) is transport-generic like [paginate.ts](paginate.ts): its first and third steps go through the `Transport` interface, while its middle step issues a raw `fetch` directly to Slack's upload host (bypassing the broker entirely). It is invoked only by the `upload` subcommand in [index.ts](index.ts)
 - [methods.ts](methods.ts) is a static data file; it is only used by the `list-methods` subcommand and has no effect on which methods the CLI can actually call
 
 ### Core Implementation
 
 **Entry point (`index.ts`)**
-- Sets up Commander with three subcommands: `list-methods`, `describe`, and the default dynamic method handler
+- Sets up Commander with the named subcommands `list-methods`, `describe`, and `upload`, plus the default dynamic method handler (`program.argument('<method>')`)
 - The dynamic handler: optionally reads JSON from stdin, parses CLI flags, merges params (CLI flags win over stdin), then branches into three paths:
   1. `--dry-run`: short-circuits immediately after param resolution -- outputs a JSON preview with `ok`, `dry_run`, `method`, `params`, `transport`, `token_present`, `paginate`, and optionally a `warning` for unknown methods. Does not require credentials. Always exits 0.
   2. `--paginate`: resolves the transport via `resolveTransport()`, then runs `mergePages(paginatePages(transport, method, params))`
@@ -23,6 +24,12 @@ Path: @/src
 - If `resolveTransport()` returns null (no credentials in either mode), the handler emits the `no_token` error envelope and exits 1 before any API path runs
 - When no arguments are provided (`process.argv.length <= 2`), help text and error go to stderr and the process exits with code 2
 - The `list-methods` subcommand supports two options that compose together: `--namespace <ns>` filters the method list to those starting with the given prefix (e.g., `chat.`), and `--descriptions` changes the output shape from `string[]` to `Array<{ method, description }>` by pulling descriptions from `getMethodMetadata()`. When `--namespace` is provided, a `namespace` field is added to the response JSON.
+- The `upload` subcommand wires CLI flags (`--file` required; `--channel`, `--title`, `--filename`, `--initial-comment`, `--thread-ts`, `--alt-text`, `--snippet-type`, `--dry-run` optional) into `uploadFile()` from [upload.ts](upload.ts). Validation precedes any network access: a missing/empty `--file` exits 2; a `statSync` existence check exits 2 with "Cannot read file: \<path\>" if unreadable. `--dry-run` prints the plan (`ok`, `dry_run`, `command`, `file`, `filename`, `length`, `channel`, `title`, `transport`, `token_present`) and returns without contacting Slack -- `length` here is the on-disk file size from `statSync`. Missing credentials emit the `no_token` envelope and exit 1; upload failures are run through `formatError` and exit 1 (JSON on stdout plus "Error:"/"Suggestion:" on stderr), mirroring the default handler's error path
+
+**External file upload (`upload.ts`)**
+- `uploadFile(args)` orchestrates Slack's three-step external upload: (1) `transport.call('files.getUploadURLExternal', { filename, length, alt_text?, snippet_type? })` where `length` is the true byte count from reading the file (`bytes.length`), not a character count; (2) a raw `fetch(uploadUrl, { method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: bytes })` straight to Slack's upload host -- the URL is the credential, so no token is sent and the bytes never traverse the broker; (3) `transport.call('files.completeUploadExternal', { files: [{ id, title }], channel_id?, initial_comment?, thread_ts? })` to share the file
+- It has no try/catch: it throws if `files.getUploadURLExternal` reports `ok:false`, does not return a string `upload_url` + `file_id`, or if the byte POST returns a non-2xx status, letting failures bubble up to the subcommand's boundary handler. The `ok:false` throw is shaped as a `slack_webapi_platform_error` (carrying `data.error`) so `formatError` maps the Slack code to a suggestion -- proxy mode returns Slack's `ok:false` body at HTTP 200 without the transport throwing, so without this the mint failure would fall through to the generic `unknown_error` envelope that direct mode never hits
+- Because steps 1 and 3 ride the transport but step 2 does not, proxy-mode channel scoping is enforced by the broker only at the completing call -- the bytes are already uploaded by the time the channel gate is checked
 
 **Transport selection (`transport.ts`)**
 - `detectTransportMode(env)` returns `'proxy' | 'direct' | 'none'`: proxy when both `NORI_SLACK_PROXY_URL` and `NORI_SLACK_CONTEXT_TOKEN` are non-empty, otherwise direct when `SLACK_BOT_TOKEN` is set, otherwise none. Proxy takes precedence over a bot token
@@ -66,6 +73,7 @@ Path: @/src
 - The `describe` command in [index.ts](index.ts) wraps `getMethodMetadata` output with `ok`, `method`, and `known` fields (where `known` is `true` only when the method has a curated entry in `METHOD_METADATA`)
 
 ### Things to Know
+- `program.enablePositionalOptions()` is called immediately after `new Command()`. Without it, both the default command and the `upload` subcommand declare a `--dry-run` option, and Commander parses the program-level `--dry-run` instead of the subcommand's identically-named flag (so `upload`'s `opts.dryRun` came back undefined). Positional options scope each command's options to the tokens that follow its own name, fixing the collision while keeping the default-command paths (interleaved unknown options plus `--dry-run`/`--paginate`/`--json-input`) working
 - `--json-input`, `--paginate`, and `--dry-run` are consumed by Commander as known options; all other flags pass through via `allowUnknownOption()` and are parsed by `parseArgs` from `process.argv`
 - The raw args filter explicitly strips `--json-input`, `--paginate`, and `--dry-run` before passing to `parseArgs`, preventing them from being sent as Slack API parameters
 - When both stdin JSON and CLI flags provide the same key, the CLI flag value wins due to spread order: `{ ...stdinParams, ...cliParams }`

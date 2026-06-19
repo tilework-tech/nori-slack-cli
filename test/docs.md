@@ -4,7 +4,7 @@ Path: @/test
 
 ### Overview
 - Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess (direct mode against the real Slack API, proxy mode against a local fake broker), plus an end-to-end packaging test that installs the npm tarball
-- Uses Vitest as the test runner; integration tests in `cli.test.ts` and `proxy-mode.test.ts` use `tsx` to run TypeScript source directly via the shared helpers in [helpers.ts](helpers.ts), `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
+- Uses Vitest as the test runner; the subprocess integration tests (direct-mode and the proxy-mode suites including the `upload` flow) use `tsx` to run TypeScript source directly via the shared helpers in [helpers.ts](helpers.ts), `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
 
 ### How it fits into the larger codebase
 - Tests cover the pure utility modules in [@/src](../src/): argument parsing, error formatting, pagination merging, and method metadata
@@ -37,7 +37,7 @@ Path: @/test
 **`helpers.ts`** -- Shared infrastructure for the subprocess integration tests:
 - `runCli` spawns the CLI with `execFile` (10-second timeout) and captures stdout/stderr/exit code; `runCliWithStdin` uses `spawn` with piped stdin for `--json-input` tests
 - Both build a hermetic environment: `SLACK_BOT_TOKEN`, `NORI_SLACK_PROXY_URL`, and `NORI_SLACK_CONTEXT_TOKEN` are stripped from the inherited process env before per-test overrides are applied. This exists because Nori session machines export the proxy vars, which would otherwise silently flip tests into proxy mode
-- `startFakeBroker()` starts a real local `http.Server` that records every request (URL, headers, parsed JSON body) and serves queued responses (defaulting to `{ok: true}`); its URL includes a path prefix so tests can verify URL joining
+- `startFakeBroker()` starts a real local `http.Server` that doubles as both the Nori broker and Slack's external upload host. Requests whose path ends in `/method` are recorded in `requests[]` (URL, headers, parsed JSON body) and answered from the queued response list (defaulting to `{ok: true}`); any other path is treated as the byte-upload target (the URL `files.getUploadURLExternal` hands back), recorded raw in a separate `uploads[]` array (with the body kept as a `Buffer`), and answered with a plain `200 "OK - <n>"` -- crucially, an upload does NOT consume a queued method response, so the same broker can serve a mint call, a byte POST, and a complete call in one upload flow. The broker also exposes `origin` (host without the `/slack-proxy` path prefix) so tests can build upload URLs that route back to it; its `url` includes the path prefix so method-call tests still verify URL joining
 
 **`cli.test.ts`** -- Direct-mode integration tests that run the CLI as a subprocess:
 - Uses the shared `runCli`/`runCliWithStdin` helpers from [helpers.ts](helpers.ts)
@@ -52,6 +52,11 @@ Path: @/test
 - Verifies param handling is unchanged through the proxy (kebab-to-snake conversion, type coercion, `--json-input` pass-through) and that `--paginate` follows broker-supplied cursors and merges pages
 - Verifies error mapping: broker error envelopes, Slack platform-code extraction from "An API error occurred" messages, the 401 context-token suggestion, and the no-credentials envelope mentioning both auth options
 - Verifies `--dry-run` reports the correct `transport` value for all three modes without contacting the broker
+
+**`upload.test.ts`** -- Blackbox subprocess tests of the `upload` subcommand against the dual-role fake broker (proxy mode, no real Slack traffic):
+- Drives the full three-step flow: mint upload URL, POST bytes to `broker.origin`, complete into a channel -- asserting `requests[]` holds the two method calls and `uploads[]` holds the raw byte POST with the exact file contents
+- Writes a non-UTF-8 fixture whose byte length differs from its character length, pinning that the CLI reports the true byte count (`length`) rather than a character count
+- Covers: `--title` defaulting to the filename, a 403 channel-denied at the completing call surfacing a structured error AFTER the bytes were already uploaded (proving the failure is the step-3 channel gate, not an earlier abort), missing `--file` exiting 2 without touching the broker, a nonexistent file exiting 2, a `files.getUploadURLExternal` failure aborting before any byte POST, and `--dry-run` reporting the plan without contacting the broker
 
 **`suggest.test.ts`** -- Unit tests for the `findSimilarMethods` function:
 - Verifies exact matches return no suggestions, case-insensitive matches return the correctly-cased method, single-character typos find the right method, nonsense input returns empty, result count respects the `maxResults` parameter, and results are sorted by similarity (closest first)

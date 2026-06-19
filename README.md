@@ -77,6 +77,36 @@ nori-slack list-methods --descriptions
 nori-slack describe chat.postMessage
 ```
 
+### File uploads
+
+Slack's modern file upload is a three-step external flow — mint an upload URL, POST the raw bytes straight to it, then complete the upload to share it into a channel. This is what Bolt exposes as `files.uploadV2`, and the middle byte-POST step cannot ride the dynamic `<method>` path, so uploading gets its own subcommand:
+
+```bash
+# Upload a local file and share it into a channel
+nori-slack upload --file ./report.pdf --channel C123
+
+# Add a title, a message, and post it into a thread
+nori-slack upload --file ./report.pdf --channel C123 \
+  --title "Q3 Report" --initial-comment "Numbers are in" --thread-ts 1700000000.000100
+
+# Preview the planned upload without contacting Slack
+nori-slack upload --file ./report.pdf --channel C123 --dry-run
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `--file <path>` | Local file to upload (required). |
+| `--channel <id>` | Channel to share the file into. |
+| `--title <title>` | File title (defaults to the filename). |
+| `--filename <name>` | Filename registered with Slack (defaults to the basename of `--file`). |
+| `--initial-comment <text>` | Message text posted alongside the file. |
+| `--thread-ts <ts>` | Thread timestamp to share the file into. |
+| `--alt-text <text>` | Alt text for the file. |
+| `--snippet-type <type>` | Snippet type for text snippets. |
+| `--dry-run` | Print the planned upload (file, byte length, channel, transport) without contacting Slack. |
+
+The bytes are POSTed directly to Slack's upload host (the upload URL is itself the credential), so they never pass through the broker. The completing call rides the normal transport, so in proxy mode the broker still enforces the session's channel scoping — uploading into a channel outside the grant fails with a structured error.
+
 ### Top-level flags
 
 | Flag | Purpose |

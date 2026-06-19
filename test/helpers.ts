@@ -73,26 +73,50 @@ export interface RecordedRequest {
   body: any;
 }
 
+export interface RecordedUpload {
+  url: string;
+  headers: http.IncomingHttpHeaders;
+  body: Buffer;
+}
+
 export interface FakeBroker {
   url: string;
+  origin: string;
   requests: RecordedRequest[];
+  uploads: RecordedUpload[];
   queueResponse(response: { status?: number; body: unknown }): void;
+  queueUploadResponse(response: { status?: number; body?: string }): void;
   close(): Promise<void>;
 }
 
+// A fake broker that doubles as Slack's external upload host. Requests to
+// `/slack-proxy/method` are recorded as method calls and answered from the
+// queued response list; any other path is treated as the byte-upload target
+// (the URL `files.getUploadURLExternal` hands back), recorded raw, and answered
+// with a plain 200 so it does not consume a queued method response.
 export async function startFakeBroker(): Promise<FakeBroker> {
   const requests: RecordedRequest[] = [];
+  const uploads: RecordedUpload[] = [];
   const responses: Array<{ status?: number; body: unknown }> = [];
+  const uploadResponses: Array<{ status?: number; body?: string }> = [];
 
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
-      const raw = Buffer.concat(chunks).toString();
+      const raw = Buffer.concat(chunks);
+      const url = req.url ?? '';
+      if (!url.endsWith('/method')) {
+        uploads.push({ url, headers: req.headers, body: raw });
+        const next = uploadResponses.length > 0 ? uploadResponses.shift()! : { status: 200 };
+        res.writeHead(next.status ?? 200, { 'content-type': 'text/plain' });
+        res.end(next.body ?? `OK - ${raw.length}`);
+        return;
+      }
       requests.push({
-        url: req.url ?? '',
+        url,
         headers: req.headers,
-        body: raw ? JSON.parse(raw) : null,
+        body: raw.length > 0 ? JSON.parse(raw.toString()) : null,
       });
       const next = responses.length > 0 ? responses.shift()! : { status: 200, body: { ok: true } };
       res.writeHead(next.status ?? 200, { 'content-type': 'application/json' });
@@ -102,12 +126,18 @@ export async function startFakeBroker(): Promise<FakeBroker> {
 
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
+  const origin = `http://127.0.0.1:${port}`;
 
   return {
-    url: `http://127.0.0.1:${port}/slack-proxy`,
+    url: `${origin}/slack-proxy`,
+    origin,
     requests,
+    uploads,
     queueResponse(response) {
       responses.push(response);
+    },
+    queueUploadResponse(response) {
+      uploadResponses.push(response);
     },
     close() {
       return new Promise<void>((resolve) => server.close(() => resolve()));
