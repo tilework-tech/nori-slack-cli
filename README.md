@@ -107,6 +107,26 @@ nori-slack upload --file ./report.pdf --channel C123 --dry-run
 
 The bytes are POSTed directly to Slack's upload host (the upload URL is itself the credential), so they never pass through the broker. The completing call rides the normal transport, so in proxy mode the broker still enforces the session's channel scoping — uploading into a channel outside the grant fails with a structured error.
 
+### File downloads
+
+Downloading a Slack file means fetching the bytes from Slack's private file host with a credential, which cannot ride the dynamic `<method>` path, so downloading gets its own subcommand:
+
+```bash
+# Download a file by ID to a local path
+nori-slack download --id F123 --output ./report.pdf
+
+# Preview the planned download without contacting Slack
+nori-slack download --id F123 --output ./report.pdf --dry-run
+```
+
+| Flag | Purpose |
+| --- | --- |
+| `--id <id>` | Slack file ID to download (required). |
+| `--output <path>` | Local path to write the bytes to (required). |
+| `--dry-run` | Print the planned download (file ID, output, transport) without contacting Slack. |
+
+In direct mode the CLI looks up the file's private download URL and fetches it with the bot token. In proxy mode the bytes come from the broker's `download` endpoint (the session has no bot token), so the broker enforces that the file is shared in the session's access grant — downloading a file outside the grant fails with a structured error.
+
 ### Top-level flags
 
 | Flag | Purpose |
