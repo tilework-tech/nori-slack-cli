@@ -9,6 +9,7 @@ import { detectTransportMode, resolveTransport } from './transport.js';
 import { getMethodMetadata, METHOD_METADATA } from './method-metadata.js';
 import { findSimilarMethods } from './suggest.js';
 import { uploadFile } from './upload.js';
+import { downloadFile } from './download.js';
 import { fileURLToPath } from 'node:url';
 import { statSync } from 'node:fs';
 import path from 'node:path';
@@ -27,7 +28,7 @@ program.enablePositionalOptions();
 program
   .name('nori-slack')
   .description('CLI for the Slack Web API. Designed for coding agents.\n\nUsage: nori-slack <method> [--param value ...]\n\nExamples:\n  nori-slack chat.postMessage --channel C123 --text "Hello"\n  nori-slack conversations.list --limit 10\n  nori-slack api.test --foo bar\n  echo \'{"channel":"C123","text":"hi"}\' | nori-slack chat.postMessage --json-input')
-  .version('0.3.0');
+  .version('0.4.0');
 
 program
   .command('list-methods')
@@ -160,6 +161,65 @@ program
         altText: opts.altText ?? null,
         snippetType: opts.snippetType ?? null,
       });
+      process.stdout.write(JSON.stringify(result) + '\n');
+    } catch (err) {
+      const error = formatError(err, SOURCE_DIR);
+      process.stdout.write(JSON.stringify(error) + '\n');
+      process.stderr.write(`Error: ${error.message}\nSuggestion: ${error.suggestion}\n`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('download')
+  .description('Download a Slack file by ID and write its bytes to a local path. Example: nori-slack download --id F123 --output ./report.pdf')
+  .option('--id <id>', 'Slack file ID to download (e.g., F123)')
+  .option('--output <path>', 'Local path to write the downloaded bytes to')
+  .option('--dry-run', 'Preview the planned download without contacting Slack')
+  .action(async (opts: { id?: string; output?: string; dryRun?: boolean }) => {
+    const fileId = opts.id;
+    if (typeof fileId !== 'string' || fileId.length === 0) {
+      const error = formatError(
+        new Error('download requires --id <id>. Example: nori-slack download --id F123 --output ./report.pdf'),
+        SOURCE_DIR
+      );
+      process.stdout.write(JSON.stringify(error) + '\n');
+      process.exit(2);
+    }
+
+    const outputPath = opts.output;
+    if (typeof outputPath !== 'string' || outputPath.length === 0) {
+      const error = formatError(
+        new Error('download requires --output <path>. Example: nori-slack download --id F123 --output ./report.pdf'),
+        SOURCE_DIR
+      );
+      process.stdout.write(JSON.stringify(error) + '\n');
+      process.exit(2);
+    }
+
+    if (opts.dryRun) {
+      const dryRunResult = {
+        ok: true,
+        dry_run: true,
+        command: 'download',
+        file_id: fileId,
+        output: outputPath,
+        transport: detectTransportMode(),
+        token_present: !!process.env.SLACK_BOT_TOKEN,
+      };
+      process.stdout.write(JSON.stringify(dryRunResult) + '\n');
+      return;
+    }
+
+    const transport = resolveTransport();
+    if (!transport) {
+      const error = formatError({ code: 'no_token' }, SOURCE_DIR);
+      process.stdout.write(JSON.stringify(error) + '\n');
+      process.exit(1);
+    }
+
+    try {
+      const result = await downloadFile({ transport, fileId, outputPath });
       process.stdout.write(JSON.stringify(result) + '\n');
     } catch (err) {
       const error = formatError(err, SOURCE_DIR);

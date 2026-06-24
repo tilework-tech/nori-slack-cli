@@ -79,13 +79,20 @@ export interface RecordedUpload {
   body: Buffer;
 }
 
+export interface RecordedDownload {
+  url: string;
+  headers: http.IncomingHttpHeaders;
+}
+
 export interface FakeBroker {
   url: string;
   origin: string;
   requests: RecordedRequest[];
   uploads: RecordedUpload[];
+  downloads: RecordedDownload[];
   queueResponse(response: { status?: number; body: unknown }): void;
   queueUploadResponse(response: { status?: number; body?: string }): void;
+  queueDownloadResponse(response: { status?: number; body?: Buffer; contentType?: string }): void;
   close(): Promise<void>;
 }
 
@@ -97,8 +104,10 @@ export interface FakeBroker {
 export async function startFakeBroker(): Promise<FakeBroker> {
   const requests: RecordedRequest[] = [];
   const uploads: RecordedUpload[] = [];
+  const downloads: RecordedDownload[] = [];
   const responses: Array<{ status?: number; body: unknown }> = [];
   const uploadResponses: Array<{ status?: number; body?: string }> = [];
+  const downloadResponses: Array<{ status?: number; body?: Buffer; contentType?: string }> = [];
 
   const server = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -106,6 +115,16 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     req.on('end', () => {
       const raw = Buffer.concat(chunks);
       const url = req.url ?? '';
+      const pathOnly = url.split('?')[0];
+      if (req.method === 'GET' && pathOnly.endsWith('/download')) {
+        downloads.push({ url, headers: req.headers });
+        const next = downloadResponses.length > 0 ? downloadResponses.shift()! : { status: 200 };
+        res.writeHead(next.status ?? 200, {
+          'content-type': next.contentType ?? 'application/octet-stream',
+        });
+        res.end(next.body ?? Buffer.alloc(0));
+        return;
+      }
       if (!url.endsWith('/method')) {
         uploads.push({ url, headers: req.headers, body: raw });
         const next = uploadResponses.length > 0 ? uploadResponses.shift()! : { status: 200 };
@@ -133,11 +152,15 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     origin,
     requests,
     uploads,
+    downloads,
     queueResponse(response) {
       responses.push(response);
     },
     queueUploadResponse(response) {
       uploadResponses.push(response);
+    },
+    queueDownloadResponse(response) {
+      downloadResponses.push(response);
     },
     close() {
       return new Promise<void>((resolve) => server.close(() => resolve()));
