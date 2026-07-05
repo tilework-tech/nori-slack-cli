@@ -1,0 +1,220 @@
+# nori-slack-cli release workflow
+#
+# Publishes nori-slack-cli to npm via OIDC Trusted Publishing (no NPM_TOKEN).
+# The git tag is the source of truth for the version; package.json ships a
+# 0.0.0 placeholder that is stamped from the tag at build time.
+#
+# Triggers:
+#   1. Tag push (slack-cli-v*.*.*) -> publish stable @latest + GitHub Release.
+#      Cut one with:  npm run release -- 0.5.0
+#   2. Manual workflow_dispatch    -> dry-run build test, or a manual publish.
+#
+# One-time setup (repo/npm admin, cannot be scripted here):
+#   - Create a GitHub Environment named "npm-publish" in this repo.
+#   - Register a Trusted Publisher for nori-slack-cli on npmjs.com:
+#       org=tilework-tech, repo=nori-slack-cli,
+#       workflow=slack-cli-release.yml, environment=npm-publish.
+
+name: Slack CLI Release
+
+on:
+  push:
+    tags:
+      - "slack-cli-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build/publish (e.g. 0.5.0)"
+        required: false
+        type: string
+      dry_run:
+        description: "Dry run (build only, do not publish)"
+        required: false
+        default: true
+        type: boolean
+
+concurrency:
+  group: slack-cli-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NPM_PACKAGE_NAME: "nori-slack-cli"
+  TAG_PREFIX: "slack-cli-v"
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      tag_name: ${{ steps.validate.outputs.tag_name }}
+      is_tag_push: ${{ steps.validate.outputs.is_tag_push }}
+    steps:
+      - name: Determine and validate version
+        id: validate
+        run: |
+          IS_TAG_PUSH="false"
+          if [[ "${{ github.event_name }}" == "push" && "${{ startsWith(github.ref, 'refs/tags/') }}" == "true" ]]; then
+            IS_TAG_PUSH="true"
+            VERSION="${GITHUB_REF_NAME#${{ env.TAG_PREFIX }}}"
+          else
+            VERSION="${{ inputs.version }}"
+            if [[ -z "$VERSION" ]]; then
+              echo "::error::workflow_dispatch requires a 'version' input"
+              exit 1
+            fi
+          fi
+
+          # Stable X.Y.Z only. Kept in sync with scripts/release-tag.mjs.
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format: $VERSION (expected a stable X.Y.Z)"
+            exit 1
+          fi
+          if [[ "$VERSION" == "0.0.0" ]]; then
+            echo "::error::0.0.0 is the package.json placeholder, not a release version"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag_name=${{ env.TAG_PREFIX }}$VERSION" >> "$GITHUB_OUTPUT"
+          echo "is_tag_push=$IS_TAG_PUSH" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and Test
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ".nvmrc"
+          cache: "npm"
+          cache-dependency-path: "package-lock.json"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Stamp version from tag
+        run: npm version "${{ needs.validate.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Build
+        run: npm run build
+
+      - name: Run tests
+        run: npm test
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Pack tarball
+        run: npm pack
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: "*.tgz"
+          retention-days: 7
+
+  publish-npm:
+    name: Publish to npm
+    needs: [validate, build]
+    if: ${{ !failure() && !cancelled() && (needs.validate.outputs.is_tag_push == 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry_run == false)) }}
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC Trusted Publishing
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 24 for npm OIDC Trusted Publishing (requires npm 11.5.1+).
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Ensure npm supports OIDC Trusted Publishing
+        # Pin to npm 11.x (>= 11.5.1 required for OIDC) rather than @latest so a
+        # future major can't silently break publishing.
+        run: npm install -g npm@11
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+
+      - name: Check version not already published
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          if npm view "${{ env.NPM_PACKAGE_NAME }}@$VERSION" version >/dev/null 2>&1; then
+            echo "::error::${{ env.NPM_PACKAGE_NAME }}@$VERSION is already published"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: |
+          TARBALL="$(ls ${{ env.NPM_PACKAGE_NAME }}-*.tgz | head -1)"
+          if [[ -z "$TARBALL" ]]; then
+            echo "::error::No tarball found to publish"
+            exit 1
+          fi
+          # OIDC is auto-detected (no NODE_AUTH_TOKEN); provenance is automatic.
+          npm publish "$TARBALL" --tag latest --access public
+
+  create-release:
+    name: Create GitHub Release
+    needs: [validate, publish-npm]
+    if: ${{ !failure() && !cancelled() && needs.validate.outputs.is_tag_push == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+          path: release-assets
+
+      - name: Generate changelog
+        run: |
+          TAG_NAME="${{ needs.validate.outputs.tag_name }}"
+          echo "## What's Changed" > CHANGELOG_RELEASE.md
+          echo "" >> CHANGELOG_RELEASE.md
+          PREV_TAG=$(git tag -l "${{ env.TAG_PREFIX }}*" --sort=-v:refname | grep -vFx "$TAG_NAME" | head -1)
+          if [[ -n "$PREV_TAG" ]]; then
+            git log --pretty=format:"* %s (%h)" "$PREV_TAG"..HEAD >> CHANGELOG_RELEASE.md
+          else
+            git log --pretty=format:"* %s (%h)" -20 >> CHANGELOG_RELEASE.md
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.tag_name }}
+          name: "nori-slack-cli ${{ needs.validate.outputs.version }}"
+          body_path: CHANGELOG_RELEASE.md
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  dry-run-summary:
+    name: Dry Run Summary
+    needs: [validate, build]
+    if: ${{ !failure() && !cancelled() && github.event_name == 'workflow_dispatch' && inputs.dry_run == true }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## Dry Run Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Built \`${{ env.NPM_PACKAGE_NAME }}@$VERSION\` without publishing." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Cut a real release with: \`npm run release -- $VERSION\`" >> "$GITHUB_STEP_SUMMARY"

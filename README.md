@@ -154,6 +154,28 @@ When both are configured, **proxy mode wins**. All CLI features (`--json-input`,
 
 In direct mode, capability boundaries come from the bot token's OAuth scopes. In proxy mode, the broker additionally restricts methods and channels to the session's access grant — requests outside the grant fail with a structured `proxy_error`.
 
+## Releasing (maintainers)
+
+Publishing to npm is automated. The git tag is the source of truth for the
+version — the committed `package.json` version is a `0.0.0` placeholder that the
+release workflow stamps from the tag.
+
+To cut a release from a clean, up-to-date `main`:
+
+```bash
+npm run release -- 0.5.0
+```
+
+This pushes a `slack-cli-v0.5.0` tag, which triggers
+[`.github/workflows/slack-cli-release.yml`](.github/workflows/slack-cli-release.yml)
+to build, test, publish `nori-slack-cli@0.5.0` to npm, and open a GitHub Release.
+Publishing uses npm [OIDC Trusted Publishing](https://docs.npmjs.com/trusted-publishers/)
+(no `NPM_TOKEN`). One-time setup by a maintainer is required: create a GitHub
+Environment named `npm-publish` in the repo, and register the trusted publisher
+for `nori-slack-cli` on npmjs.com (workflow `slack-cli-release.yml`, environment
+`npm-publish`). You can validate the pipeline without publishing via the
+workflow's `workflow_dispatch` dry-run.
+
 ## License
 
 See [LICENSE](LICENSE) and [LICENSE-ADDENDUM.txt](LICENSE-ADDENDUM.txt).

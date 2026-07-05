@@ -36,20 +36,22 @@ Path: @/
 
 ### Packaging and distribution
 
-The published npm artifact is assembled at pack time, not committed to git. The relevant `package.json` fields form a single chain that must stay in sync:
+The published npm artifact is assembled at pack time, not committed to git. The git tag is the source of truth for the version -- [package.json](package.json) `version` ships a `0.0.0` placeholder that the release workflow stamps from the tag at build time. The relevant `package.json` fields form a single chain that must stay in sync:
 
 ```
 dist/ (gitignored)
   └─ produced by `prepare: "npm run build"` (runs on npm pack / npm publish / npm install from tarball)
   └─ made executable by `postbuild: "chmod +x dist/index.js"`
-  └─ included in the tarball by `files: ["dist"]`
+  └─ included in the tarball by `files: ["dist", "LICENSE-ADDENDUM.txt"]`
   └─ exposed as `nori-slack` via `bin: { "nori-slack": "./dist/index.js" }`
   └─ verified end-to-end by test/packaging.test.ts on every `npm test`
 ```
 
+- **Version model** -- "git tag is the source of truth." A release is cut by pushing a `slack-cli-v<version>` tag via `npm run release -- <version>` (see [scripts/docs.md](scripts/docs.md)). The release workflow stamps the version from the tag with `npm version <v> --no-git-tag-version` before building, so the committed `0.0.0` is never published. [src/index.ts](src/index.ts) reads `version` from [package.json](package.json) at runtime (via the `SOURCE_DIR` package-root resolution), so `nori-slack --version` reflects the stamped/published version -- a single source of truth
+- **CI vs. release** -- [.github/workflows/pr-ci.yaml](.github/workflows/pr-ci.yaml) (pull requests to `main`) and [.github/workflows/main-ci.yaml](.github/workflows/main-ci.yaml) (push to `main`) are the build+test quality gate: checkout, `actions/setup-node` reading Node from [.nvmrc](.nvmrc), `npm install`, `npm run build`, `npm test`. [.github/workflows/slack-cli-release.yml](.github/workflows/slack-cli-release.yml) is the separate publish pipeline (npm OIDC Trusted Publishing, no `NPM_TOKEN`). See [.github/workflows/docs.md](.github/workflows/docs.md) for the full pipeline
 - `test/packaging.test.ts` runs `npm pack`, installs the resulting tarball into a tmpdir, and executes the installed `nori-slack` binary to confirm `dist/` actually ships. See [test/docs.md](test/docs.md) for test-level detail
-- CI is defined in [.github/workflows/pr-ci.yaml](.github/workflows/pr-ci.yaml) (on pull requests to `main`) and [.github/workflows/main-ci.yaml](.github/workflows/main-ci.yaml) (on push to `main`). Both mirror `nori-registrar` conventions: checkout, `actions/setup-node` reading Node version from [.nvmrc](.nvmrc), `npm install`, `npm run build`, `npm test`
-- [.nvmrc](.nvmrc) pins Node 22 to match the `nori-registrar` baseline
+- **Licensing in the tarball** -- the repo is Apache-2.0 plus a modifying [LICENSE-ADDENDUM.txt](LICENSE-ADDENDUM.txt), so `package.json` `license` is `"SEE LICENSE IN LICENSE"` rather than a plain SPDX tag, and the addendum is added to the `files` allowlist so it ships in the published tarball (the addendum requires it to be distributed alongside the primary license)
+- [.nvmrc](.nvmrc) pins Node 22 (also enforced by the `engines` field); the release workflow's publish job overrides this with Node 24 because npm OIDC Trusted Publishing requires npm 11.5.1+
 
 ### Things to Know
 - Flag parsing in [src/parse-args.ts](src/parse-args.ts) converts `--kebab-case` to `snake_case` because the Slack API uses snake_case parameter names
@@ -58,7 +60,7 @@ dist/ (gitignored)
 - Error formatting in [src/errors.ts](src/errors.ts) maps Slack error codes to actionable suggestions (e.g., `channel_not_found` suggests running `conversations.list`); unknown errors get a generic suggestion pointing to the source directory. Broker errors from proxy mode are normalized into the same envelope, including extracting Slack platform codes embedded in broker messages
 - Every error response includes a `source` field with the filesystem path to the CLI, so agents can locate the source code for debugging
 - The method metadata in [src/method-metadata.ts](src/method-metadata.ts) marks `files.upload` as deprecated with a pointer to the `files.getUploadURLExternal` + `files.completeUploadExternal` flow -- the `upload` subcommand (see [src/upload.ts](src/upload.ts)) is the client-side orchestration of exactly that flow, so agents should reach for `upload` rather than the deprecated single-call `files.upload`
-- The CLI version string is currently duplicated: once in [package.json](package.json) `version` and once as a hardcoded argument to Commander's `.version()` call in [src/index.ts](src/index.ts). Both must be bumped together on release
+- The CLI version has a single source of truth: [package.json](package.json) `version`. [src/index.ts](src/index.ts) reads that field at runtime and passes it to Commander's `.version()`, so `nori-slack --version` always matches the published package. Releases are cut by tagging (see [scripts/docs.md](scripts/docs.md) and [.github/workflows/docs.md](.github/workflows/docs.md)), never by hand-editing a version -- the committed `version` is a `0.0.0` placeholder that the release workflow stamps from the tag before build
 - **Packaging invariant**: anything that changes how the distributed artifact is produced must keep the `prepare` script, the `files` allowlist, `bin`, and [test/packaging.test.ts](test/packaging.test.ts) consistent. Concretely, any future change that removes `prepare`, removes `files`, emits generated code outside `dist/`, or adds a second bin entry needs matching updates in the allowlist and the packaging test -- otherwise `npm install -g nori-slack-cli` silently ships a broken binary (this was the exact `0.1.0` regression)
 
 Created and maintained by Nori.

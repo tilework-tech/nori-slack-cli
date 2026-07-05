@@ -1,20 +1,35 @@
 {
   "name": "nori-slack-cli",
-  "version": "0.4.0",
+  "version": "0.0.0",
   "description": "CLI for interacting with the Slack Web API, designed for coding agents",
+  "homepage": "https://github.com/tilework-tech/nori-slack-cli#readme",
+  "bugs": {
+    "url": "https://github.com/tilework-tech/nori-slack-cli/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tilework-tech/nori-slack-cli.git"
+  },
+  "author": "Tilework <contact@tilework.tech>",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=22"
+  },
   "type": "module",
   "bin": {
     "nori-slack": "./dist/index.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "LICENSE-ADDENDUM.txt"
   ],
   "scripts": {
     "build": "tsc",
     "postbuild": "chmod +x dist/index.js",
     "prepare": "npm run build",
     "test": "vitest run --no-file-parallelism",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "release": "node scripts/create-release.mjs"
   },
   "dependencies": {
     "@slack/web-api": "^7.0.0",

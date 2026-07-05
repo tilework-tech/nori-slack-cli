@@ -3,15 +3,15 @@
 Path: @/test
 
 ### Overview
-- Unit tests for `parseArgs`, `formatError`, `mergePages`, and method metadata coverage, plus integration tests that invoke the CLI as a subprocess (direct mode against the real Slack API, proxy mode against a local fake broker), plus an end-to-end packaging test that installs the npm tarball
-- Uses Vitest as the test runner; the subprocess integration tests (direct-mode and the proxy-mode suites including the `upload` flow) use `tsx` to run TypeScript source directly via the shared helpers in [helpers.ts](helpers.ts), `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
+- Unit tests for `parseArgs`, `formatError`, `mergePages`, method metadata coverage, and the `releaseTagFor` release-tag helper, plus integration tests that invoke the CLI as a subprocess (direct mode against the real Slack API, proxy mode against a local fake broker), plus an end-to-end packaging test that installs the npm tarball
+- Uses Vitest as the test runner; the global `testTimeout` is raised to 20000ms in [vitest.config.ts](../vitest.config.ts) because cold `npx tsx` subprocess starts under the serial suite can exceed the default 5s. The subprocess integration tests (direct-mode and the proxy-mode suites including the `upload` flow) use `tsx` to run TypeScript source directly via the shared helpers in [helpers.ts](helpers.ts), `build.test.ts` compiles via `tsc` and runs the built `dist/index.js` artifact, and `packaging.test.ts` runs `npm pack` and installs the tarball into a tmpdir
 
 ### How it fits into the larger codebase
 - Tests cover the pure utility modules in [@/src](../src/): argument parsing, error formatting, pagination merging, and method metadata
 - Integration tests in [cli.test.ts](cli.test.ts) and [proxy-mode.test.ts](proxy-mode.test.ts) exercise the full CLI binary by spawning `npx tsx src/index.ts` as a child process, verifying end-to-end behavior including exit codes, stdout JSON structure, and stderr output
 - [proxy-mode.test.ts](proxy-mode.test.ts) is the blackbox verification of the proxy transport in [@/src/transport.ts](../src/transport.ts) -- it pins the wire contract that the Nori Sessions broker depends on
 - [packaging.test.ts](packaging.test.ts) closes the loop on the npm distribution path documented in [@/docs.md](../docs.md) -- it is the guard against the `0.1.0` regression where `dist/` was missing from the published tarball
-- All tests run on every PR and on every push to `main` via the workflows in [@/.github/workflows](../.github/workflows/)
+- All tests run on every PR and on every push to `main` via the CI workflows in [@/.github/workflows](../.github/workflows/), and again in the release workflow's build job before any npm publish
 - The test directory is excluded from TypeScript compilation via `tsconfig.json`
 
 ### Core Implementation
@@ -60,6 +60,9 @@ Path: @/test
 
 **`suggest.test.ts`** -- Unit tests for the `findSimilarMethods` function:
 - Verifies exact matches return no suggestions, case-insensitive matches return the correctly-cased method, single-character typos find the right method, nonsense input returns empty, result count respects the `maxResults` parameter, and results are sorted by similarity (closest first)
+
+**`release-tag.test.ts`** -- Unit tests for the `releaseTagFor` helper in [../scripts/release-tag.mjs](../scripts/release-tag.mjs):
+- Verifies a stable `X.Y.Z` version produces the `slack-cli-v<version>` tag, and that prerelease suffixes, a leading `v`, and non-semver inputs all throw. This pins the stable-only release contract shared with [../.github/workflows/slack-cli-release.yml](../.github/workflows/slack-cli-release.yml); see [../scripts/docs.md](../scripts/docs.md)
 
 **`build.test.ts`** -- Build verification tests that exercise the compiled output:
 - `beforeAll` runs `tsc` once; all tests share the resulting `dist/index.js`
