@@ -81,5 +81,6 @@ Path: @/src
 - Rate limit errors extract `retryAfter` from the `@slack/web-api` error object and include the retry duration in the message
 - The `--dry-run` output's `token_present` field only reflects `SLACK_BOT_TOKEN`; the `transport` field is the authoritative indicator of which mode would be used (proxy wins when both credential sets are present)
 - The missing-credentials error keeps the error code `no_token` for backward compatibility, but its message ("No Slack credentials provided.") and suggestion cover both credential sets
+- [index.ts](index.ts) reads `VERSION` from [../package.json](../package.json) at runtime (resolved via `SOURCE_DIR`) and passes it to Commander's `.version()`; the version is not hardcoded. The git tag is the source of truth for releases -- the committed `version` is a `0.0.0` placeholder stamped from the tag at build time. See [../docs.md](../docs.md) and [../.github/workflows/docs.md](../.github/workflows/docs.md)
 
 Created and maintained by Nori.

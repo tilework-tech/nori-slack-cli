@@ -11,11 +11,12 @@ import { findSimilarMethods } from './suggest.js';
 import { uploadFile } from './upload.js';
 import { downloadFile } from './download.js';
 import { fileURLToPath } from 'node:url';
-import { statSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SOURCE_DIR = path.resolve(__dirname, '..');
+const VERSION = JSON.parse(readFileSync(path.join(SOURCE_DIR, 'package.json'), 'utf-8')).version;
 
 const program = new Command();
 
@@ -28,7 +29,7 @@ program.enablePositionalOptions();
 program
   .name('nori-slack')
   .description('CLI for the Slack Web API. Designed for coding agents.\n\nUsage: nori-slack <method> [--param value ...]\n\nExamples:\n  nori-slack chat.postMessage --channel C123 --text "Hello"\n  nori-slack conversations.list --limit 10\n  nori-slack api.test --foo bar\n  echo \'{"channel":"C123","text":"hi"}\' | nori-slack chat.postMessage --json-input')
-  .version('0.4.0');
+  .version(VERSION);
 
 program
   .command('list-methods')
